@@ -96,7 +96,6 @@
         };
     }
 
-    // TODO: Shall the text be actually trimmed? doing it for now because of readability.
     function _buildVirtualDOMFromContainer(
                 container, 
                 virtual)
@@ -150,7 +149,7 @@
                 original,
                 potential)
     {
-        console.log(`MUTATION: from ${original} to => ${potential}`);
+
     }
 
     Section.prototype.define = function(
@@ -190,13 +189,45 @@
         return this;
     };
 
-    function _render(
-                compiled,
-                original)
+    function createHTMLTemplateFrom(
+                node)
     {
-        // get difference between section.__virtual and original,
-        // create a new VDOM based on difference
-        // rerender
+        var tag = node.tag;
+        var text = node.text;
+        var children  = node.children;
+        var attributes = node.attributes;
+        
+
+    }
+
+    function _renderSingleNode(
+                node)
+    {
+        if(node.tag == 'br')
+            return "<br/>";
+
+        var str = `<${node.tag}>`;
+        str += `${node.text === undefined ? STRING_EMPTY : node.text}`
+        
+        if(node.children.length > 0) {
+            for (let i = 0; i < node.children.length; i++)
+                str += _renderSingleNode(node.children[i], container);
+        }
+
+        str += `</${node.tag}>`
+
+        return str;
+    }
+
+    function _render(
+                section,
+                diff,
+                reRender=false)
+    {
+        if(reRender)
+            section.__container.innerHTML = "";
+        
+        section.__container.insertAdjacentHTML( 'beforeend',  _renderSingleNode(section.__compiled));
     }
 
     function _deepCopyVirtualNode(node)
@@ -231,14 +262,34 @@
             children: includeChildren ? node.children : []
         };
     }
-
+    
     function _resolveObjectAccessChain(
                 properties,
                 chain)
     {
-        var base = properties[chain[0]];
+        var base = void 0;
+        
+        var isArrayPreceding = chain[0].includes('[');
+        if(isArrayPreceding) {
+            var accessor = chain[0].substr(0, chain[0].indexOf('['));
+            var arrayAccessChain = chain[0].substr(chain[0].indexOf('['));
+
+            base = _resolveArrayAccessChain(properties, section, accessor, arrayAccessChain);
+        } 
+        else
+            base = properties[chain[0]];
+        
+        var next = null;
         for (var i = 1; i < chain.length; i++) {
-            var next = null;
+
+            var isAccessingArray = chain[i].includes('[');
+            if(isAccessingArray) {
+                var accessor = chain[i].substr(0, chain[i].indexOf('['));
+                var arrayAccessChain = chain[i].substr(chain[i].indexOf('['));
+                
+                base = _resolveArrayAccessChain(base, properties, accessor, arrayAccessChain);
+                continue;
+            }
 
             var isFunctionCallMatch = /(\w+)\(.*?\)$/.exec(chain[i]);
             if(isFunctionCallMatch)
@@ -248,12 +299,13 @@
 
             base = next;
         };
-
+        
         return base;
     }
 
     function _resolveArrayAccessChain(
                 properties,
+                section,
                 accessor,
                 chain)
     {
@@ -268,8 +320,7 @@
                 var index = chain.substr(chain.indexOf('[') + 1);
                 var substr = index.substr(index.indexOf('[') + 1);
                 
-                var l = _resolveArrayAccessChain(properties, indexer, substr);
-                return storage[l];
+                return storage[_resolveArrayAccessChain(section, properties, indexer, substr)];
             }
 
             indexer = indexer.substr(0, indexer.indexOf(']') || indexer.length);
@@ -282,11 +333,9 @@
             }
         };
 
-        //console.log(storage);
         return storage;
     }
 
-    // TODO: Handle Array access (e.g. todo[0])
     function _resolveElementTextBindings(
                 section,
                 element)
@@ -298,12 +347,12 @@
         while((match = /{:\s*([\w.()\[\]\"\']+)\s*:}/g.exec(element.text)) != null) {
             var accessor = match[1];
 
-            var objectAccessChain = void 0;
+            var objectAccessChain = [];
             var isObjectAccessingChain = accessor.includes('.');
             if(isObjectAccessingChain)
                 objectAccessChain = accessor.split('.');
 
-            var arrayAccessChain = void 0;
+            var arrayAccessChain = [];
             var isArrayAccessor = accessor.includes('[');
             if(isArrayAccessor) {
                 arrayAccessChain = accessor.substr(accessor.indexOf('['));
@@ -312,9 +361,15 @@
 
             var isDirectPropertyBinding = isObjectAccessingChain ? section.hasOwnProperty(objectAccessChain[0]) : 
                                                                    section.hasOwnProperty(accessor);
-            
+
+            if(isObjectAccessingChain && isArrayAccessor) {
+                var isArrayPreceding = objectAccessChain[0].includes('[');
+                if(isArrayPreceding)
+                    isDirectPropertyBinding = true;
+            }
+
             if(isDirectPropertyBinding) {
-                var property =  _toPrivatePropertyHash(isObjectAccessingChain ? objectAccessChain[0] : accessor);
+                var property = _toPrivatePropertyHash(isObjectAccessingChain ? objectAccessChain[0] : accessor);
                 if(isObjectAccessingChain) {
                     element.text = element.text.replace(match[0], 
                         _resolveObjectAccessChain(section, objectAccessChain));
@@ -324,7 +379,7 @@
 
                 if(isArrayAccessor && !isObjectAccessingChain) {
                     element.text = element.text.replace(match[0], 
-                        _resolveArrayAccessChain(section, accessor, arrayAccessChain));
+                        _resolveArrayAccessChain(section, section, accessor, arrayAccessChain));
                     continue;
                 }
 
@@ -333,7 +388,6 @@
             }
 
             if(!element.properties || element.properties.length <= 0) {
-                element.text = STRING_EMPTY;
                 return;
             }
 
@@ -355,13 +409,11 @@
 
                     if(isArrayAccessor && !isObjectAccessingChain) {
                         element.text = element.text.replace(match[0], 
-                            _resolveArrayAccessChain(element.properties[i], elementPseudonym, arrayAccessChain));
+                            _resolveArrayAccessChain(property, section, elementPseudonym, arrayAccessChain));
                         break;
                     }
                 }
             };
-
-            //console.log(element.text);
         };
     }
 
@@ -394,6 +446,8 @@
                     {
                         case JSFOR_ATTR_NAME: {
                             var match = /(\w+)\s*in\s*(\w+)/.exec(value);
+                            if(!match)
+                                break;
 
                             var elementPseudonym = match[1];
                             var elementStoragePropertyName = match[2];
@@ -402,12 +456,12 @@
                             
                             if(Array.isArray(property) && property.length > 0) 
                             {
-                                console.warn("↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓");
-                                // TODO: Set within the parent element too (el.properties[len - 1][pseudo])
                                 for (var i = 1; i < property.length; i++) {
                                     var prefab = _deepCopyVirtualNode(element);
                                     
-                                    prefab.properties.push(property[i]);
+                                    var l = prefab.properties.push({ });
+                                    prefab.properties[l - 1][elementPseudonym] = property[i];
+
                                     _traverseTreeDeep(prefab, function(el) { 
                                         var len = el.properties.push({ });
                                         el.properties[len - 1][elementPseudonym] = property[i]; 
@@ -416,12 +470,13 @@
                                     element.parent.children.push(prefab);
                                 };
                                 
-                                element.properties.push(property[0]);
+                                var l = element.properties.push({ });
+                                element.properties[l - 1][elementPseudonym] = property[0];
+
                                 _traverseTreeDeep(element, function(el) {
                                     var len = el.properties.push({ });
                                     el.properties[len - 1][elementPseudonym] = property[0];
                                 });
-                                console.warn("↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑");
                             }
                         } break;
                     };
@@ -450,7 +505,13 @@
             return;
 
         var section = scopes[0];
-        _compile(section, section.__virtual);
+
+        var z0  = performance.now();
+        section.__compiled = _compile(section, section.__virtual);
+        var z1 = performance.now();
+
+        console.log("COMPILING TOOK " + (z1 - z0) + "ms ");
+        _render(section, null, true);
     });
 
     exports.Section = Section;

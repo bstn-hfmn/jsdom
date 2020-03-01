@@ -8,8 +8,8 @@
 <body>
     <div id="container">
         <br />
-        {: obj[0] :}
-        {: todos[1].name :}
+        {: obj[indices[1]] :}
+        {: otherOBJ.value[indices[0]].name :}
         <br />
         {: value :}
         
@@ -19,7 +19,7 @@
         </span>
         <ol>
             <li js:for="todo in todos">
-                <p>{: todo['name'] :}</p>
+                <p>{: todo.name :}</p>
             </li>
         </ol>
 
@@ -45,7 +45,13 @@
         ])
         .define('obj', ['VALUE0', 'VALUE1'])
         .define('thing', { indices: [45, 1, 32] })
-        .define('indices', [0, 1]);
+        .define('indices', [0, 1])
+        .define('otherOBJ', {
+            value: [
+                {name: 'AAAAAAA'},
+                {name: 'BBBBBBB'}
+            ]
+        });
 
         app.todos[0].name = "name";
     
