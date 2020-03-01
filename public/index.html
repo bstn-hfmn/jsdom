@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Index</title>
+</head>
+<body>
+    <div id="container">
+        <br />
+        {: obj[0] :}
+        {: todos[1].name :}
+        <br />
+        {: value :}
+        
+        <p js:click="makeAlert">Click me!</p>
+        <span js:title="message">
+            Hover over this span to see the bound message.    
+        </span>
+        <ol>
+            <li js:for="todo in todos">
+                <p>{: todo['name'] :}</p>
+            </li>
+        </ol>
+
+        <!--
+        <p>Same thing but with a custom directive.</p>
+        <ol>
+            <todo-item js:for="todo in todos" id="d" />
+        </ol>
+        -->
+    </div>
+
+    <!-- CDN -->
+    <script src="./src/jsdom.js"></script>
+    <script>
+        //import * as JSDOM from './src/jsdom.module.js';
+        const app = new JSDOM.Section('#container')
+        .define('value', 'My Value!')
+        .define('other', 'An other Value!')
+        .define('message', 'My Message!')
+        .define('todos', [
+            { name: 'Coding', completed: true },
+            { name: 'Washing the dishes', completed: false }
+        ])
+        .define('obj', ['VALUE0', 'VALUE1'])
+        .define('thing', { indices: [45, 1, 32] })
+        .define('indices', [0, 1]);
+
+        app.todos[0].name = "name";
+    
+        //const component = new JSDOM.Component('todo-item', {
+        //    template: '<li>{{ todo.name }}</li>'
+        //});
+    </script>
+</body>
+</html>
