@@ -9,9 +9,9 @@
     <div id="container">
         <br />
         {: obj[indices[1]] :}
-        {: otherOBJ.value[indices[0]].name :}
         <br />
-        {: value :}
+        {: todos[0].name.toUpperCase() :}
+        <br />
         
         <p js:click="makeAlert">Click me!</p>
         <span js:title="message">
@@ -19,7 +19,7 @@
         </span>
         <ol>
             <li js:for="todo in todos">
-                <p>{: todo.name :}</p>
+                <p>{: todo.name :} <span>{: other :}</span></p>
             </li>
         </ol>
 

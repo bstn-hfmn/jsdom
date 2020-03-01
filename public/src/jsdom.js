@@ -12,6 +12,8 @@
     var DOM_STATE_COMPLETE = 'complete';
     var DOM_STATE_INTERACTIVE = 'interactive';
 
+    var INLINE_TAGS = ['br', 'img', 'input'];
+
     var JSFOR_ATTR_NAME = 'js:for';
     var JSFOR_VALUE_REGEX = /(\w+)\s*in\s*(\w+)/;
     
@@ -37,25 +39,10 @@
         return '_' + (hash + (hash + str).FNV32A());
     }
 
-    function _deepCopySlowJSON(obj)
+    function _deepCopySlowJSON(
+                obj)
     {
         return JSON.parse(JSON.stringify(obj));
-    }
-
-    function _getTextContentWithoutDescendants(
-                element)
-    {
-        var texts = [];
-
-        var child = element.firstChild;
-        while(child) {
-            if(NODE_TYPE_TEXT === child.nodeType)
-                texts.push(child.data);
-                   
-            child = child.nextSibling;
-        };
-
-        return texts.join(STRING_EMPTY);
     }
 
     function _traverseTreeShallow(
@@ -96,29 +83,34 @@
         };
     }
 
-    function _buildVirtualDOMFromContainer(
+    function _buildUncompiledDOMFromContainer(
                 container, 
-                virtual)
+                root)
     {
-        var count = container.childElementCount;
-
-        for (var i = 0; i < count; i++) {
-            var child = container.children[i];
-            if(!(NODE_TYPE_ELEM == child.nodeType))
+        var child = container.firstChild;
+        while(child) {
+            if(!NODE_TYPE_ELEM === child.nodeType || 
+               !NODE_TYPE_TEXT === child.nodeType)
                 continue;
             
-            var element = {
-                tag: child.nodeName.toLowerCase(),
-                text: _getTextContentWithoutDescendants(child),
-                parent: virtual,
+            var node = {
+                parent: root,
+                nodeName: child.nodeName,
+                text: child.textContent,
+                tag: child.localName || child.tagName,
                 attributes: child.attributes,
-                properties: [], 
+                type: child.nodeType,
+                
+                data: child.data,
                 children: [],
+                properties: []
             };
-
-            virtual.children.push(element);
+            
+            root.children.push(node);
             if(child.childElementCount > 0)
-                _buildVirtualDOMFromContainer(child, element);
+                _buildUncompiledDOMFromContainer(child, node);
+            
+            child = child.nextSibling;
         };
     }
 
@@ -127,19 +119,23 @@
     {	
         this.__container = selector ? document.querySelector(selector) : void 0;
         this.__virtual = selector ? {
-            text: _getTextContentWithoutDescendants(this.__container),
-            tag: this.__container.nodeName.toLowerCase(),
             parent: this.__container.parentElement,
+            nodeName: this.__container.nodeName,
+            text: this.__container.textContent,
+            tag: this.__container.localName || this.__container.tagName,
             attributes: this.__container.attributes,
-            properties: [],
-            children: []
+            type: this.__container.nodeType,
+            
+            data: this.__container.data,
+            children: [],
+            properties: []
         } : void 0;
 
         this.__compiled = {};
 
         var constructed = this.__container && this.__virtual;
         if(constructed) {
-            _buildVirtualDOMFromContainer(this.__container, this.__virtual);
+            _buildUncompiledDOMFromContainer(this.__container, this.__virtual);
             scopes.push(this);
         }
     }
@@ -189,56 +185,73 @@
         return this;
     };
 
-    function createHTMLTemplateFrom(
-                node)
-    {
-        var tag = node.tag;
-        var text = node.text;
-        var children  = node.children;
-        var attributes = node.attributes;
+    function _attributeListToString(attributes) {
+        if(attributes.length <= 0)
+            return "";
         
+        var builder = "";
+        for (let i = 0; i < attributes.length; i++) {
+            var name = attributes[i].name;
+            var value = attributes[i].value;
+            
+            if(!REGEX_ATTR_BINDER.test(name))
+                builder += " "+ name +"=\""+ value +"\" ";
+        };
 
+        return builder;
     }
 
-    function _renderSingleNode(
+    function _createHTMLNodeFrom(
                 node)
-    {
-        if(node.tag == 'br')
-            return "<br/>";
-
-        var str = `<${node.tag}>`;
-        str += `${node.text === undefined ? STRING_EMPTY : node.text}`
+    {  
+        if(node.type == NODE_TYPE_COMMENT) 
+            return "";
+        if(node.type == NODE_TYPE_TEXT)
+            return ""+ node.text +"";
         
-        if(node.children.length > 0) {
-            for (let i = 0; i < node.children.length; i++)
-                str += _renderSingleNode(node.children[i], container);
+        if(INLINE_TAGS.includes(node.tag))
+            return "<"+ node.tag +" "+ _attributeListToString(node.attributes) +"/>";
+        
+        var builder = "";
+        builder += "<"+ node.tag +" "+ _attributeListToString(node.attributes) +">";
+
+        var hasNoChildren = !(node.children.length > 0);
+        if(hasNoChildren) {
+            if(node.text && node.text !== STRING_EMPTY)
+                builder += node.text;
         }
-
-        str += `</${node.tag}>`
-
-        return str;
+        
+        for (let i = 0; i < node.children.length; i++)
+            builder += _createHTMLNodeFrom(node.children[i]);
+        
+        return builder;
     }
 
     function _render(
                 section,
-                diff,
+                compiled,
                 reRender=false)
     {
         if(reRender)
             section.__container.innerHTML = "";
         
-        section.__container.insertAdjacentHTML( 'beforeend',  _renderSingleNode(section.__compiled));
+        section.__container.insertAdjacentHTML('beforeend',  _createHTMLNodeFrom(compiled));
     }
 
     function _deepCopyVirtualNode(node)
     {
         var copy = {
-            tag: node.tag,
-            text: node.text,
             parent: node.parent,
+            nodeName: node.nodeName,
+            text: node.text,
+            tag: node.tag,
             attributes: node.attributes,
-            properties: _deepCopySlowJSON(node.properties), 
-            children: []
+            type: node.type,
+            
+            data: node.data,
+            properties: _deepCopySlowJSON(node.properties),
+
+            children: [],
         };
 
         _traverseTreeShallow(node, function(el) {
@@ -254,17 +267,23 @@
     function _shallowCopyVirtualNode(node, includeChildren = true)
     {
         return {
-            tag: node.tag,
-            text: node.text,
             parent: node.parent,
+            nodeName: node.nodeName,
+            text: node.text,
+            tag: node.tag,
             attributes: node.attributes,
-            properties: _deepCopySlowJSON(node.properties), 
-            children: includeChildren ? node.children : []
+            type: node.type,
+            
+            data: node.data,
+            properties: _deepCopySlowJSON(node.properties),
+            
+            children: includeChildren ? node.children : [],
         };
     }
     
     function _resolveObjectAccessChain(
                 properties,
+                section,
                 chain)
     {
         var base = void 0;
@@ -372,7 +391,7 @@
                 var property = _toPrivatePropertyHash(isObjectAccessingChain ? objectAccessChain[0] : accessor);
                 if(isObjectAccessingChain) {
                     element.text = element.text.replace(match[0], 
-                        _resolveObjectAccessChain(section, objectAccessChain));
+                        _resolveObjectAccessChain(section, section, objectAccessChain));
                     
                     continue;
                 }
@@ -403,7 +422,7 @@
                 {
                     if(isObjectAccessingChain) {
                         element.text = element.text.replace(match[0], 
-                            _resolveObjectAccessChain(property, objectAccessChain));
+                            _resolveObjectAccessChain(property, section, objectAccessChain));
                         break;
                     }
 
@@ -424,10 +443,10 @@
         var compiled = _shallowCopyVirtualNode(subtree, false);
         
         var deep = _deepCopyVirtualNode(subtree);
-        _traverseTreeDeep(deep, (element) => {
+        _traverseTreeDeep(deep, (node) => {
 
-            var tag = element.tag;
-            var attributes = element.attributes;
+            var tag = node.tag;
+            var attributes = node.attributes;
 
             var hasAttributes = attributes && attributes.length > 0;
             if(hasAttributes)
@@ -457,7 +476,7 @@
                             if(Array.isArray(property) && property.length > 0) 
                             {
                                 for (var i = 1; i < property.length; i++) {
-                                    var prefab = _deepCopyVirtualNode(element);
+                                    var prefab = _deepCopyVirtualNode(node);
                                     
                                     var l = prefab.properties.push({ });
                                     prefab.properties[l - 1][elementPseudonym] = property[i];
@@ -467,13 +486,13 @@
                                         el.properties[len - 1][elementPseudonym] = property[i]; 
                                     });
                                     
-                                    element.parent.children.push(prefab);
+                                    node.parent.children.push(prefab);
                                 };
                                 
-                                var l = element.properties.push({ });
-                                element.properties[l - 1][elementPseudonym] = property[0];
+                                var l = node.properties.push({ });
+                                node.properties[l - 1][elementPseudonym] = property[0];
 
-                                _traverseTreeDeep(element, function(el) {
+                                _traverseTreeDeep(node, function(el) {
                                     var len = el.properties.push({ });
                                     el.properties[len - 1][elementPseudonym] = property[0];
                                 });
@@ -483,14 +502,10 @@
                 };
             }
 
-            var isDirectChildren = element.parent == deep;
+            var isDirectChildren = node.parent == deep;
             if(isDirectChildren)
-                compiled.children.push(element);
+                compiled.children.push(node);
         });
-
-        console.log("COMPILATION FINISHED");
-        console.log("--------------------------------");
-        console.log(compiled);
 
         _resolveElementTextBindings(section, compiled);
         _traverseTreeDeep(compiled, function(element) {
@@ -506,12 +521,8 @@
 
         var section = scopes[0];
 
-        var z0  = performance.now();
-        section.__compiled = _compile(section, section.__virtual);
-        var z1 = performance.now();
-
-        console.log("COMPILING TOOK " + (z1 - z0) + "ms ");
-        _render(section, null, true);
+        var c = _compile(section, section.__virtual);
+        _render(section, c, true);
     });
 
     exports.Section = Section;
